@@ -1,1 +1,278 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Scanner de Tickets</title>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; 
+      text-align: center; 
+      padding: 20px; 
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+    }
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 20px;
+      padding: 30px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    }
+    h1 { 
+      color: #333; 
+      margin-bottom: 10px;
+      font-size: 2em;
+    }
+    .subtitle {
+      color: #666;
+      margin-bottom: 30px;
+    }
+    #reader { 
+      width: 100%; 
+      border-radius: 15px; 
+      overflow: hidden; 
+      margin: 20px 0;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+    }
+    #result { 
+      margin: 20px 0; 
+      padding: 20px; 
+      border-radius: 12px; 
+      font-size: 1.2em; 
+      font-weight: bold;
+      min-height: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .success { 
+      background: linear-gradient(135deg, #11998e, #38ef7d); 
+      color: white; 
+      animation: slideIn 0.3s ease;
+    }
+    .error { 
+      background: linear-gradient(135deg, #eb3349, #f45c43); 
+      color: white;
+      animation: slideIn 0.3s ease;
+    }
+    .loading { 
+      background: linear-gradient(135deg, #f093fb, #f5576c); 
+      color: white;
+    }
+    @keyframes slideIn {
+      from { transform: translateY(-20px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    button { 
+      margin: 10px 5px;
+      padding: 15px 30px; 
+      font-size: 1em; 
+      cursor: pointer; 
+      border: none; 
+      border-radius: 10px;
+      font-weight: bold;
+      transition: all 0.3s ease;
+    }
+    .btn-restart { 
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      color: white;
+    }
+    .btn-restart:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4); }
+    .btn-manual { 
+      background: linear-gradient(135deg, #f093fb, #f5576c);
+      color: white;
+    }
+    .btn-manual:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(240, 147, 251, 0.4); }
+    #manual-input { 
+      margin-top: 20px; 
+      padding: 20px; 
+      background: #f8f9fa;
+      border-radius: 12px; 
+      display: none;
+    }
+    #manual-input input { 
+      width: 100%; 
+      padding: 15px; 
+      font-size: 1.1em; 
+      border: 2px solid #ddd; 
+      border-radius: 10px;
+      margin: 10px 0;
+      text-align: center;
+    }
+    #manual-input input:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+    .camera-error {
+      background: #fff3cd;
+      color: #856404;
+      padding: 20px;
+      border-radius: 10px;
+      margin: 20px 0;
+      display: none;
+    }
+    @media (max-width: 600px) {
+      body { padding: 10px; }
+      .container { padding: 20px; }
+      h1 { font-size: 1.5em; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📷 Scanner de Tickets</h1>
+    <p class="subtitle">Scannez les QR codes pour valider les tickets</p>
+    
+    <div id="camera-error" class="camera-error">
+      <strong>⚠️ Accès caméra requis</strong><br><br>
+      Veuillez autoriser l'accès à la caméra pour utiliser le scanner.
+    </div>
+    
+    <div id="reader"></div>
+    <div id="result" class="loading">🔄 Initialisation de la caméra...</div>
+    
+    <div>
+      <button class="btn-restart" onclick="redemarrerScan()">🔄 Redémarrer</button>
+      <button class="btn-manual" onclick="basculerSaisieManuelle()">⌨️ Saisie manuelle</button>
+    </div>
 
+    <div id="manual-input">
+      <h3>Saisie manuelle</h3>
+      <input type="text" id="ticket-input" placeholder="Entrez l'ID du ticket">
+      <button class="btn-restart" onclick="verifierManuel()">✅ Valider</button>
+    </div>
+  </div>
+
+  <script>
+    // ⚠️ REMPLACE CETTE URL PAR TON URL APPS SCRIPT
+    const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxtLaqtXJ1-sHYjWMYrhAjHec2cUgQrfzZtP57-jW1m/dev/exhttps://script.google.com/macros/s/AKfycbzkJmzT4eIpq2ljFCM5ffupjETjP5PSUTuSjqH6GUlK86B9EoB9hf3676k0h89K2ppbLw/exec';
+    
+    let html5QrCode;
+    let isProcessing = false;
+
+    function onScanSuccess(decodedText) {
+      if (isProcessing) return;
+      isProcessing = true;
+      
+      document.getElementById('result').className = 'loading';
+      document.getElementById('result').innerText = '⏳ Vérification en cours...';
+      
+      fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idScanne: decodedText })
+      })
+      .then(response => response.json())
+      .then(data => {
+        document.getElementById('result').innerText = data.message;
+        document.getElementById('result').className = data.success ? 'success' : 'error';
+        setTimeout(() => { isProcessing = false; }, 2000);
+      })
+      .catch(err => {
+        document.getElementById('result').innerText = '❌ Erreur de connexion';
+        document.getElementById('result').className = 'error';
+        console.error(err);
+        isProcessing = false;
+      });
+    }
+
+    function onScanError(error) {
+      console.warn('Erreur de scan:', error);
+    }
+
+    function demarrerScanner() {
+      html5QrCode = new Html5Qrcode("reader");
+      
+      html5QrCode.start(
+        { facingMode: "environment" },
+        { 
+          fps: 10, 
+          qrbox: { width: 300, height: 300 },
+          aspectRatio: 1.0
+        },
+        onScanSuccess,
+        onScanError
+      )
+      .catch(err => {
+        console.error("Erreur caméra:", err);
+        document.getElementById('result').className = 'error';
+        document.getElementById('result').innerText = '❌ Erreur caméra';
+        document.getElementById('camera-error').style.display = 'block';
+      });
+    }
+
+    function redemarrerScan() {
+      if (html5QrCode) {
+        html5QrCode.stop()
+          .then(() => {
+            html5QrCode.clear();
+            document.getElementById('result').className = 'loading';
+            document.getElementById('result').innerText = '🔄 Redémarrage...';
+            setTimeout(demarrerScanner, 500);
+          })
+          .catch(demarrerScanner);
+      } else {
+        demarrerScanner();
+      }
+    }
+
+    function basculerSaisieManuelle() {
+      const div = document.getElementById('manual-input');
+      div.style.display = div.style.display === 'none' ? 'block' : 'none';
+      if (div.style.display === 'block') {
+        document.getElementById('ticket-input').focus();
+        if (html5QrCode && html5QrCode.isScanning) {
+          html5QrCode.pause();
+        }
+      } else {
+        if (html5QrCode && html5QrCode.isScanning) {
+          html5QrCode.resume();
+        }
+      }
+    }
+
+    function verifierManuel() {
+      const id = document.getElementById('ticket-input').value.trim();
+      if (!id) {
+        alert("Veuillez entrer un ID");
+        return;
+      }
+      
+      document.getElementById('result').className = 'loading';
+      document.getElementById('result').innerText = '⏳ Vérification...';
+      
+      fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idScanne: id })
+      })
+      .then(response => response.json())
+      .then(data => {
+        document.getElementById('result').innerText = data.message;
+        document.getElementById('result').className = data.success ? 'success' : 'error';
+        document.getElementById('ticket-input').value = '';
+        setTimeout(() => { isProcessing = false; }, 2000);
+      })
+      .catch(err => {
+        document.getElementById('result').innerText = '❌ Erreur';
+        document.getElementById('result').className = 'error';
+        isProcessing = false;
+      });
+    }
+
+    // Démarrage automatique
+    window.addEventListener('load', () => {
+      setTimeout(demarrerScanner, 500);
+    });
+
+    // Entrée pour saisie manuelle
+    document.getElementById('ticket-input').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') verifierManuel();
+    });
+  </script>
+</body>
+</html>
