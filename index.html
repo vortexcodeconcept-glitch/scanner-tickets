@@ -72,12 +72,30 @@
       margin: 10px 0;
       text-align: center;
     }
+    .tips {
+      background: #fff3cd;
+      color: #856404;
+      padding: 15px;
+      border-radius: 10px;
+      margin: 15px 0;
+      font-size: 0.9em;
+      text-align: left;
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>📷 Scanner de Tickets</h1>
     <p class="subtitle">Scannez les QR codes pour valider les tickets</p>
+    
+    <div class="tips">
+      <strong>💡 Conseils pour scanner :</strong>
+      <ul style="margin: 10px 0 0 0; padding-left: 20px;">
+        <li>Approchez-vous du QR code (15-20 cm)</li>
+        <li>Assurez-vous d'avoir une bonne luminosité</li>
+        <li>Pour les QR codes sombres, éclairez-les bien</li>
+      </ul>
+    </div>
     
     <div id="reader"></div>
     <div id="result" class="loading">🔄 Initialisation...</div>
@@ -95,27 +113,10 @@
   </div>
 
   <script>
-    // ⚠️ REMPLACE PAR TON URL APPS SCRIPT
     const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbySV7T_x9c6V4AWziYI89Jbf0h-OLSyMnon-P7vNCIC0KjJ4d0lzMm12hQynSvWMptIGw/exec';
     
     let html5QrCode;
     let isProcessing = false;
-
-    // FONCTION MODIFIÉE : Utilise text/plain pour éviter CORS
-    async function envoyerRequete(idScanne) {
-      const response = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: {
-          'Content-Type': 'text/plain',
-        },
-        body: idScanne
-      });
-      
-      // Avec no-cors, on ne peut pas lire la réponse
-      // On retourne un objet par défaut
-      return { success: true, message: "✅ Envoyé !" };
-    }
 
     async function onScanSuccess(decodedText) {
       if (isProcessing) return;
@@ -125,7 +126,6 @@
       document.getElementById('result').innerText = '⏳ Vérification...';
       
       try {
-        // On utilise text/plain pour éviter CORS
         const response = await fetch(APPS_SCRIPT_URL, {
           method: 'POST',
           headers: {
@@ -149,9 +149,18 @@
     function demarrerScanner() {
       html5QrCode = new Html5Qrcode("reader");
       
+      // Configuration optimisée pour les QR codes sombres
+      const config = { 
+        fps: 10, 
+        qrbox: { width: 300, height: 300 },
+        aspectRatio: 1.0,
+        disableFlip: false,
+        formatsToSupport: ['QR_CODE']
+      };
+      
       html5QrCode.start(
         { facingMode: "environment" },
-        { fps: 10, qrbox: { width: 300, height: 300 } },
+        config,
         onScanSuccess
       ).catch(err => {
         console.error("Erreur caméra:", err);
