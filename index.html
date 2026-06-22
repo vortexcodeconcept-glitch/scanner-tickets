@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Scanner de Tickets</title>
-  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { 
@@ -24,6 +23,30 @@
     }
     h1 { color: #333; margin-bottom: 10px; font-size: 2em; }
     .subtitle { color: #666; margin-bottom: 30px; }
+    #video-container {
+      position: relative;
+      width: 100%;
+      border-radius: 15px;
+      overflow: hidden;
+      margin: 20px 0;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+      background: #000;
+    }
+    #video {
+      width: 100%;
+      display: block;
+    }
+    #scan-overlay {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 280px;
+      height: 280px;
+      border: 3px solid #00ff00;
+      box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+      pointer-events: none;
+    }
     #result { 
       margin: 20px 0; 
       padding: 20px; 
@@ -38,18 +61,6 @@
     .success { background: linear-gradient(135deg, #11998e, #38ef7d); color: white; }
     .error { background: linear-gradient(135deg, #eb3349, #f45c43); color: white; }
     .loading { background: linear-gradient(135deg, #f093fb, #f5576c); color: white; }
-    .scan-btn {
-      background: linear-gradient(135deg, #11998e, #38ef7d);
-      color: white;
-      font-size: 1.5em;
-      padding: 25px 50px;
-      margin: 20px 0;
-      border: none;
-      border-radius: 15px;
-      cursor: pointer;
-      font-weight: bold;
-      box-shadow: 0 10px 30px rgba(17, 153, 142, 0.4);
-    }
     .btn-manual { 
       background: linear-gradient(135deg, #f093fb, #f5576c); 
       color: white;
@@ -59,6 +70,7 @@
       border-radius: 10px;
       cursor: pointer;
       font-weight: bold;
+      margin: 5px;
     }
     #manual-input { 
       margin-top: 20px; 
@@ -76,38 +88,30 @@
       margin: 10px 0;
       text-align: center;
     }
-    .tips {
-      background: #fff3cd;
-      color: #856404;
+    .error-msg {
+      background: #f8d7da;
+      color: #721c24;
       padding: 15px;
       border-radius: 10px;
       margin: 15px 0;
-      font-size: 0.9em;
-      text-align: left;
     }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>📷 Scanner de Tickets</h1>
-    <p class="subtitle">Scannez les QR codes pour valider les tickets</p>
+    <p class="subtitle">Scan en temps réel</p>
     
-    <div class="tips">
-      <strong>💡 Comment ça marche :</strong>
-      <ul style="margin: 10px 0 0 0; padding-left: 20px;">
-        <li>Cliquez sur "📸 Scanner un ticket"</li>
-        <li>L'appareil photo s'ouvre automatiquement</li>
-        <li>Prenez une photo du QR code</li>
-        <li>La vérification se fait instantanément</li>
-      </ul>
+    <div id="video-container">
+      <video id="video" playsinline autoplay muted></video>
+      <div id="scan-overlay"></div>
     </div>
     
-    <input type="file" id="qr-input" accept="image/*" capture="environment" style="display: none;">
-    <button class="scan-btn" onclick="document.getElementById('qr-input').click()">📸 Scanner un ticket</button>
+    <div id="result" class="loading">🔄 Initialisation...</div>
     
-    <div id="result" class="loading">Prêt à scanner</div>
-    
-    <button class="btn-manual" onclick="basculerSaisieManuelle()">⌨️ Saisie manuelle</button>
+    <div>
+      <button class="btn-manual" onclick="toggleManual()">⌨️ Saisie manuelle</button>
+    </div>
 
     <div id="manual-input">
       <h3>Saisie manuelle</h3>
@@ -119,88 +123,140 @@
   <script>
     const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbySV7T_x9c6V4AWziYI89Jbf0h-OLSyMnon-P7vNCIC0KjJ4d0lzMm12hQynSvWMptIGw/exec';
     let isProcessing = false;
+    let detector;
+    let stream;
+    let scanInterval;
 
-    // Fonction pour décoder le QR code depuis une image
-    function decoderQRCode(file) {
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        
-        reader.onload = (e) => {
-          const img = new Image();
-          img.onload = () => {
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            canvas.width = img.width;
-            canvas.height = img.height;
-            ctx.drawImage(img, 0, 0);
-            
-            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            const code = jsQR(imageData.data, imageData.width, imageData.height);
-            
-            if (code) {
-              resolve(code.data);
-            } else {
-              reject('QR code non détecté');
-            }
+    async function initScanner() {
+      try {
+        // Utiliser BarcodeDetector API (native, ultra rapide)
+        if ('BarcodeDetector' in window) {
+          detector = new BarcodeDetector({
+            formats: ['qr_code']
+          });
+          document.getElementById('result').innerText = '📷 Pointez vers un QR code...';
+          startCamera();
+        } else {
+          // Fallback: charger jsQR
+          document.getElementById('result').innerText = '⏳ Chargement...';
+          const script = document.createElement('script');
+          script.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js';
+          script.onload = () => {
+            document.getElementById('result').innerText = '📷 Pointez vers un QR code...';
+            startCamera();
           };
-          img.onerror = () => reject('Erreur de chargement image');
-          img.src = e.target.result;
-        };
-        
-        reader.onerror = () => reject('Erreur de lecture fichier');
-        reader.readAsDataURL(file);
-      });
+          document.head.appendChild(script);
+        }
+      } catch (err) {
+        console.error(err);
+        document.getElementById('result').className = 'error';
+        document.getElementById('result').innerText = '❌ Erreur initialisation';
+      }
     }
 
-    // Quand l'utilisateur prend une photo
-    document.getElementById('qr-input').addEventListener('change', async (e) => {
-      if (isProcessing) return;
-      isProcessing = true;
-      
-      const file = e.target.files[0];
-      if (!file) {
-        isProcessing = false;
+    async function startCamera() {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: 'environment',
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          }
+        });
+        
+        const video = document.getElementById('video');
+        video.srcObject = stream;
+        
+        video.onloadedmetadata = () => {
+          video.play();
+          scanLoop();
+        };
+      } catch (err) {
+        console.error('Erreur caméra:', err);
+        document.getElementById('result').className = 'error';
+        document.getElementById('result').innerText = '❌ Accès caméra refusé';
+      }
+    }
+
+    async function scanLoop() {
+      if (isProcessing) {
+        setTimeout(scanLoop, 500);
         return;
       }
+
+      const video = document.getElementById('video');
+      
+      if (detector) {
+        // Utiliser BarcodeDetector (rapide)
+        try {
+          const barcodes = await detector.detect(video);
+          if (barcodes.length > 0) {
+            await processQRCode(barcodes[0].rawValue);
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      } else if (window.jsQR) {
+        // Utiliser jsQR (fallback)
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0);
+        
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const code = jsQR(imageData.data, imageData.width, imageData.height);
+        
+        if (code) {
+          await processQRCode(code.data);
+        }
+      }
+      
+      scanInterval = setTimeout(scanLoop, 100); // Scan toutes les 100ms
+    }
+
+    async function processQRCode(text) {
+      if (isProcessing || !text) return;
+      isProcessing = true;
       
       document.getElementById('result').className = 'loading';
-      document.getElementById('result').innerText = '⏳ Analyse du QR code...';
+      document.getElementById('result').innerText = '⏳ Vérification...';
       
       try {
-        // Décoder le QR code
-        const decodedText = await decoderQRCode(file);
-        
-        document.getElementById('result').innerText = '⏳ Vérification du ticket...';
-        
-        // Envoyer au serveur
         const response = await fetch(APPS_SCRIPT_URL, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'text/plain',
-          },
-          body: decodedText
+          headers: { 'Content-Type': 'text/plain' },
+          body: text
         });
         
         const data = await response.json();
         document.getElementById('result').innerText = data.message;
         document.getElementById('result').className = data.success ? 'success' : 'error';
         
+        if (data.success) {
+          await new Promise(r => setTimeout(r, 2000));
+          document.getElementById('result').className = 'loading';
+          document.getElementById('result').innerText = '📷 Prêt à scanner';
+        }
       } catch (err) {
         console.error('Erreur:', err);
-        document.getElementById('result').innerText = '❌ QR code non détecté. Réessayez.';
+        document.getElementById('result').innerText = '❌ Erreur connexion';
         document.getElementById('result').className = 'error';
       }
       
-      // Reset l'input pour pouvoir scanner à nouveau
-      e.target.value = '';
-      setTimeout(() => { isProcessing = false; }, 2000);
-    });
+      isProcessing = false;
+    }
 
-    function basculerSaisieManuelle() {
+    function toggleManual() {
       const div = document.getElementById('manual-input');
       div.style.display = div.style.display === 'none' ? 'block' : 'none';
       if (div.style.display === 'block') {
         document.getElementById('ticket-input').focus();
+        if (stream) {
+          stream.getTracks().forEach(track => track.stop());
+        }
+      } else {
+        initScanner();
       }
     }
 
@@ -212,34 +268,23 @@
       }
       
       if (isProcessing) return;
-      isProcessing = true;
-      
-      document.getElementById('result').className = 'loading';
-      document.getElementById('result').innerText = '⏳ Vérification...';
-      
-      try {
-        const response = await fetch(APPS_SCRIPT_URL, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'text/plain',
-          },
-          body: id
-        });
-        
-        const data = await response.json();
-        document.getElementById('result').innerText = data.message;
-        document.getElementById('result').className = data.success ? 'success' : 'error';
-        document.getElementById('ticket-input').value = '';
-      } catch (err) {
-        document.getElementById('result').innerText = '❌ Erreur';
-        document.getElementById('result').className = 'error';
-      }
-      
-      setTimeout(() => { isProcessing = false; }, 2000);
+      await processQRCode(id);
+      document.getElementById('ticket-input').value = '';
     }
 
+    window.addEventListener('load', initScanner);
+    
     document.getElementById('ticket-input').addEventListener('keypress', (e) => {
       if (e.key === 'Enter') verifierManuel();
+    });
+
+    window.addEventListener('beforeunload', () => {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+      if (scanInterval) {
+        clearTimeout(scanInterval);
+      }
     });
   </script>
 </body>
