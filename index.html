@@ -168,7 +168,59 @@
         document.getElementById('result').innerText = '❌ Erreur caméra';
       });
     }
+async function demarrerScannerNatif() {
 
+    if (!('BarcodeDetector' in window)) {
+        console.log('BarcodeDetector non supporté');
+        demarrerScanner(); // retour sur html5-qrcode
+        return;
+    }
+
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+                facingMode: "environment",
+                width: { ideal: 1920 },
+                height: { ideal: 1080 }
+            }
+        });
+
+        const video = document.createElement('video');
+        video.srcObject = stream;
+        video.setAttribute('playsinline', true);
+        video.autoplay = true;
+
+        document.getElementById('reader').innerHTML = '';
+        document.getElementById('reader').appendChild(video);
+
+        const detector = new BarcodeDetector({
+            formats: ['qr_code']
+        });
+
+        async function scan() {
+            try {
+                const codes = await detector.detect(video);
+
+                if (codes.length > 0 && !isProcessing) {
+                    onScanSuccess(codes[0].rawValue);
+                }
+            } catch (e) {
+                console.error(e);
+            }
+
+            requestAnimationFrame(scan);
+        }
+
+        video.onloadedmetadata = () => {
+            video.play();
+            scan();
+        };
+
+    } catch (err) {
+        console.error(err);
+        demarrerScanner();
+    }
+}
     function redemarrerScan() {
       if (html5QrCode) {
         html5QrCode.stop()
@@ -226,9 +278,9 @@
       }
     }
 
-    window.addEventListener('load', () => {
-      setTimeout(demarrerScanner, 500);
-    });
+window.addEventListener('load', () => {
+  setTimeout(demarrerScannerNatif, 500);
+});
 
     document.getElementById('ticket-input').addEventListener('keypress', (e) => {
       if (e.key === 'Enter') verifierManuel();
